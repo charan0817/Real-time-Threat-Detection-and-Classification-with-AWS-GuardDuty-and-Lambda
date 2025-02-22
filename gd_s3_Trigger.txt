@@ -1,0 +1,110 @@
+49.207.248.101
+import json
+import boto3
+import gzip
+from io import BytesIO
+from boto3 import client
+from ast import literal_eval
+client=boto3.client('s3')
+sqs = boto3.client('sqs', region_name='eu-north-1')
+
+
+#fetching files from s3 and storing it in a list
+def lambda_handler(event, context):
+    print(event)
+    bucket_name= event['Records'][0]['s3']['bucket']['name']
+    s3 = boto3.resource('s3')
+    bucket = s3.Bucket(bucket_name)
+    print(f"bucket : {bucket_name}")
+    
+    
+    key_list=[]
+    for key in event['Records']:
+        key_list.append(key['s3']['object']['key'])
+    print(f" key = {key_list}")    
+    
+        
+       
+    for files in key_list:
+        
+# itirating through file_list and stroing to FILE_TO_READ    
+        BUCKET = bucket_name
+        FILE_TO_READ = files
+        result = client.get_object(Bucket=BUCKET, Key=FILE_TO_READ) 
+        # print(type(result))
+        text = result["Body"].read()
+        
+    #converting the gz file to json    
+        with gzip.GzipFile(fileobj=BytesIO(text)) as gzipfile:
+            json_data = gzipfile.read().decode('utf-8')
+        json_lines = json_data.strip().split('\n')   # split to induvidual lines
+    
+    #contents in form of list    
+        jlist=[]
+        for lines in json_lines:
+            parsed_line = json.loads(lines)
+            jlist.append(parsed_line)
+        # print(jlist)
+        # print(type(jlist))
+    
+    #listed dictionary to dictionary format    
+        jdict={}
+        for i in jlist :
+            jdict.update(i)
+        # print(type(jdict))
+        # print(jdict)
+    
+    # fetching data from dictionary
+        low=[1,2,3]
+        medium=[4,5,6]
+    
+        sev=None
+        
+        if jdict.get('severity') in low:
+            sev="low"
+        elif jdict.get('severity')in medium:
+            sev="medium"
+        else:
+            sev="high"
+        
+        title=jdict.get('title')
+        desc=jdict.get('description')
+        fId=jdict.get('id')
+        count=jdict.get('service',{}).get('count')
+        Region=jdict.get('region')
+        threatIP=jdict.get('service',{}).get('action',{}).get('awsApiCallAction',{}).get('remoteIpDetails',{}).get('ipAddressV4')
+        country=jdict.get('service',{}).get('action',{}).get('awsApiCallAction',{}).get('remoteIpDetails',{}).get('country',{}).get('countryName')
+        city=jdict.get('service',{}).get('action',{}).get('awsApiCallAction',{}).get('remoteIpDetails',{}).get('city',{}).get('cityName')
+        latitude=jdict.get('service',{}).get('action',{}).get('awsApiCallAction',{}).get('remoteIpDetails',{}).get('geoLocation',{}).get('lat')
+        longitude=jdict.get('service',{}).get('action',{}).get('awsApiCallAction',{}).get('remoteIpDetails',{}).get('geoLocation',{}).get('lon')
+        service_provider=jdict.get('service',{}).get('action',{}).get('awsApiCallAction',{}).get('remoteIpDetails',{}).get('organization',{}).get('asnOrg')
+        affected_resource=jdict.get('service',{}).get('action',{}).get('awsApiCallAction',{}).get('affectedResources')
+        
+        
+        info_string={"title": title, 
+        'description': desc, 
+        'severity': sev, 
+        'findingId': fId, 
+        'count': count,
+        'Region': Region,
+        'ThrearIp': threatIP,
+        'Country' : country,
+        'City' : city,
+        'Latitude': latitude,
+        'Longitude': longitude,
+        'service_provider': service_provider
+        }
+        print(info_string)
+        
+        queue_url = 'https://sqs.eu-north-1.amazonaws.com/302897056821/gdqueue'
+        list_as_json = json.dumps(info_string, default=str)
+        response=sqs.send_message(QueueUrl=queue_url,MessageBody=list_as_json)
+        print(f"sns response = {response}")
+        
+        
+        # print(f"title: {title}  description: {desc}  severity: {sev}  findingId: {fId}  count: {count} ")
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Hello from Lambda!')
+    
+    }
